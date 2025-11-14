@@ -15,7 +15,10 @@
 						try: () =>
 							fetch('/api/streams/first', {
 								method: 'POST',
-								body: JSON.stringify({ message: 'Hello, world!' }),
+								body: JSON.stringify({
+									message:
+										'HHello, world!Hello, world!Hello, world!Hello, world!Hello, world!Hello, world!Hello, world!ello, world!'
+								}),
 								signal: abortController?.signal
 							}),
 						catch: (e) => {
