@@ -29,6 +29,7 @@
 		"vite": "^7.1.10"
 	},
 	"dependencies": {
+		"@effect/experimental": "^0.57.1",
 		"effect": "^3.19.3",
 		"neverthrow": "^8.2.0",
 		"runed": "^0.36.0",

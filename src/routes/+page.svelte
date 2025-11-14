@@ -1,12 +1,67 @@
 <script lang="ts">
 	import logo from '$lib/assets/favicon.svg';
+	import type { CharacterClassification } from '$lib/shared/types';
+	import { makeChannel } from '@effect/experimental/Sse';
+	import { Channel, Console, Effect, pipe, Stream } from 'effect';
+
+	let abortController: AbortController | null = null;
+
+	const fetchFirstStreamEffect = Effect.gen(function* () {
+		yield* Effect.scoped(
+			Effect.gen(function* () {
+				abortController = new AbortController();
+				const resBody = yield* pipe(
+					Effect.tryPromise({
+						try: () =>
+							fetch('/api/streams/first', {
+								method: 'POST',
+								body: JSON.stringify({ message: 'Hello, world!' }),
+								signal: abortController?.signal
+							}),
+						catch: (e) => {
+							return new Error(`Failed to fetch first stream: ${e}`);
+						}
+					}),
+					Effect.flatMap((response) => {
+						if (!response.ok || !response.body) {
+							return Effect.fail(new Error('Failed to fetch first stream'));
+						}
+						return Effect.succeed(response.body);
+					})
+				);
+
+				const channel = makeChannel();
+
+				const stream = Stream.fromReadableStream({
+					evaluate: () => resBody,
+					onError: (e) => {
+						return new Error(`Failed to create stream from readable stream: ${e}`);
+					}
+				});
+
+				// doing this because the generics are not getting passed correctly in a pipe from the original stream
+				const parsedStream = pipe(
+					Stream.decodeText(stream),
+					Stream.toChannel,
+					(ch) => Channel.pipeTo(ch, channel),
+					Stream.fromChannel,
+					Stream.map((event) => JSON.parse(event.data) as CharacterClassification)
+				);
+
+				yield* pipe(
+					parsedStream,
+					Stream.runForEach((event) => Console.log(`${event.character} is a ${event.type}`))
+				);
+			})
+		);
+	});
 
 	const handleFetchFirstStream = async () => {
-		const response = await fetch('/api/streams/first', {
-			method: 'POST',
-			body: JSON.stringify({ message: 'Hello, world!' })
-		});
-		console.log(response.body);
+		try {
+			await Effect.runPromise(fetchFirstStreamEffect);
+		} catch (e) {
+			console.error(e);
+		}
 	};
 </script>
 
@@ -19,5 +74,9 @@
 
 	<button onclick={handleFetchFirstStream} class="rounded-md bg-primary px-4 py-2 text-white"
 		>Fetch First Stream</button
+	>
+	<button
+		onclick={() => abortController?.abort()}
+		class="rounded-md bg-red-500 px-4 py-2 text-white">Abort</button
 	>
 </main>

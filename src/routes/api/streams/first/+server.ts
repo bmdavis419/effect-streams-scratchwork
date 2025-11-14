@@ -1,6 +1,8 @@
-import { Console, Effect, Exit, pipe, Schema } from 'effect';
+import { Effect, Exit, pipe, Schema, Stream } from 'effect';
 import type { RequestEvent } from './$types';
 import { error } from '@sveltejs/kit';
+import type { CharacterClassification } from '$lib/shared/types';
+import * as Sse from '@effect/experimental/Sse';
 
 const bodySchema = Schema.Struct({
 	message: Schema.String
@@ -26,9 +28,46 @@ const getEffect = (event: RequestEvent) =>
 			)
 		);
 
-		yield* Console.log('got message', message);
+		const characters = message.split('');
 
-		return new Response(message);
+		const stream = Stream.fromIterable(characters).pipe(
+			Stream.mapEffect((c) => Effect.delay(Effect.succeed(c), '100 millis')),
+			Stream.map<string, CharacterClassification>((c) => {
+				console.log(`processing character: ${c}`);
+				const isVowel = /^[aeiou]$/i.test(c);
+				if (isVowel) {
+					return {
+						type: 'vowel',
+						character: c
+					};
+				}
+
+				const isConsonant = /^[bcdfghjklmnpqrstvwxyz]$/i.test(c);
+				if (isConsonant) {
+					return {
+						type: 'consonant',
+						character: c
+					};
+				}
+
+				return {
+					type: 'other',
+					character: c
+				};
+			}),
+			Stream.map(
+				(data): Sse.Event => ({
+					_tag: 'Event',
+					event: 'data',
+					id: undefined,
+					data: JSON.stringify(data)
+				})
+			),
+			Stream.map(Sse.encoder.write),
+			Stream.toReadableStream()
+		);
+
+		return new Response(stream, {});
 	});
 
 export const POST = async (event) => {
