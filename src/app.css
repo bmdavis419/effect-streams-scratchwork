@@ -1,0 +1,13 @@
+@import 'tailwindcss';
+@plugin '@tailwindcss/typography';
+
+@theme {
+	--color-primary: #f97316;
+}
+
+@layer base {
+	:root {
+		color-scheme: light;
+	}
+}
+
