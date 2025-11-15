@@ -74,9 +74,9 @@
 		}
 	};
 
-	const handleFetchBroadcastStream2 = async () => {
+	const handleFetchBetterBroadcastStream = async () => {
 		try {
-			await Effect.runPromise(callTestStreamEffect('/api/streams/broadcast2'));
+			await Effect.runPromise(callTestStreamEffect('/api/streams/better-broadcast'));
 		} catch (e) {
 			console.error(e);
 		}
@@ -96,9 +96,9 @@
 	<button onclick={handleFetchBroadcastStream} class="rounded-md bg-primary px-4 py-2 text-white"
 		>Fetch Broadcast Stream</button
 	>
-
-	<button onclick={handleFetchBroadcastStream2} class="rounded-md bg-primary px-4 py-2 text-white"
-		>Fetch Broadcast Stream 2</button
+	<button
+		onclick={handleFetchBetterBroadcastStream}
+		class="rounded-md bg-primary px-4 py-2 text-white">Fetch Better Broadcast Stream</button
 	>
 	<button
 		onclick={() => abortController?.abort()}
