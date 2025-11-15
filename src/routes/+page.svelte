@@ -6,62 +6,77 @@
 
 	let abortController: AbortController | null = null;
 
-	const fetchFirstStreamEffect = Effect.gen(function* () {
-		yield* Effect.scoped(
-			Effect.gen(function* () {
-				abortController = new AbortController();
-				const resBody = yield* pipe(
-					Effect.tryPromise({
-						try: () =>
-							fetch('/api/streams/first', {
-								method: 'POST',
-								body: JSON.stringify({
-									message:
-										'HHello, world!Hello, world!Hello, world!Hello, world!Hello, world!Hello, world!Hello, world!ello, world!'
+	const callTestStreamEffect = (endpoint: string) =>
+		Effect.gen(function* () {
+			yield* Effect.scoped(
+				Effect.gen(function* () {
+					abortController = new AbortController();
+					const resBody = yield* pipe(
+						Effect.tryPromise({
+							try: () =>
+								fetch(endpoint, {
+									method: 'POST',
+									body: JSON.stringify({
+										message: 'this is pain'
+									}),
+									signal: abortController?.signal
 								}),
-								signal: abortController?.signal
-							}),
-						catch: (e) => {
-							return new Error(`Failed to fetch first stream: ${e}`);
+							catch: (e) => {
+								return new Error(`Failed to fetch first stream: ${e}`);
+							}
+						}),
+						Effect.flatMap((response) => {
+							if (!response.ok || !response.body) {
+								return Effect.fail(new Error('Failed to fetch first stream'));
+							}
+							return Effect.succeed(response.body);
+						})
+					);
+
+					const channel = makeChannel();
+
+					const stream = Stream.fromReadableStream({
+						evaluate: () => resBody,
+						onError: (e) => {
+							return new Error(`Failed to create stream from readable stream: ${e}`);
 						}
-					}),
-					Effect.flatMap((response) => {
-						if (!response.ok || !response.body) {
-							return Effect.fail(new Error('Failed to fetch first stream'));
-						}
-						return Effect.succeed(response.body);
-					})
-				);
+					});
 
-				const channel = makeChannel();
+					// doing this because the generics are not getting passed correctly in a pipe from the original stream
+					const parsedStream = pipe(
+						Stream.decodeText(stream),
+						Stream.toChannel,
+						(ch) => Channel.pipeTo(ch, channel),
+						Stream.fromChannel,
+						Stream.map((event) => JSON.parse(event.data) as CharacterClassification)
+					);
 
-				const stream = Stream.fromReadableStream({
-					evaluate: () => resBody,
-					onError: (e) => {
-						return new Error(`Failed to create stream from readable stream: ${e}`);
-					}
-				});
-
-				// doing this because the generics are not getting passed correctly in a pipe from the original stream
-				const parsedStream = pipe(
-					Stream.decodeText(stream),
-					Stream.toChannel,
-					(ch) => Channel.pipeTo(ch, channel),
-					Stream.fromChannel,
-					Stream.map((event) => JSON.parse(event.data) as CharacterClassification)
-				);
-
-				yield* pipe(
-					parsedStream,
-					Stream.runForEach((event) => Console.log(`${event.character} is a ${event.type}`))
-				);
-			})
-		);
-	});
+					yield* pipe(
+						parsedStream,
+						Stream.runForEach((event) => Console.log(`${event.character} is a ${event.type}`))
+					);
+				})
+			);
+		});
 
 	const handleFetchFirstStream = async () => {
 		try {
-			await Effect.runPromise(fetchFirstStreamEffect);
+			await Effect.runPromise(callTestStreamEffect('/api/streams/basic'));
+		} catch (e) {
+			console.error(e);
+		}
+	};
+	const handleFetchBroadcastStream = async () => {
+		try {
+			await Effect.runPromise(callTestStreamEffect('/api/streams/broadcast'));
+		} catch (e) {
+			console.error(e);
+		}
+	};
+
+	const handleFetchBroadcastStream2 = async () => {
+		try {
+			await Effect.runPromise(callTestStreamEffect('/api/streams/broadcast2'));
 		} catch (e) {
 			console.error(e);
 		}
@@ -77,6 +92,13 @@
 
 	<button onclick={handleFetchFirstStream} class="rounded-md bg-primary px-4 py-2 text-white"
 		>Fetch First Stream</button
+	>
+	<button onclick={handleFetchBroadcastStream} class="rounded-md bg-primary px-4 py-2 text-white"
+		>Fetch Broadcast Stream</button
+	>
+
+	<button onclick={handleFetchBroadcastStream2} class="rounded-md bg-primary px-4 py-2 text-white"
+		>Fetch Broadcast Stream 2</button
 	>
 	<button
 		onclick={() => abortController?.abort()}

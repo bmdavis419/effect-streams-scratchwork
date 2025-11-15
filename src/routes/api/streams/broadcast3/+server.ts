@@ -1,9 +1,6 @@
-import { Console, Effect, Exit, Fiber, pipe, Queue, Schema, Stream, Take } from 'effect';
-import type { RequestEvent } from './$types';
-import { error } from '@sveltejs/kit';
+import { Console, Effect, Exit, pipe, Schema, Stream } from 'effect';
+import { error, type RequestEvent } from '@sveltejs/kit';
 import type { CharacterClassification } from '$lib/shared/types';
-import * as Sse from '@effect/experimental/Sse';
-import { waitUntil } from '@vercel/functions';
 
 const bodySchema = Schema.Struct({
 	message: Schema.String
@@ -29,14 +26,11 @@ const getEffect = (event: RequestEvent) =>
 			)
 		);
 
-		yield* Console.log(`message: ${message}`);
-
 		const characters = message.split('');
 
 		const baseStream = Stream.fromIterable(characters).pipe(
 			Stream.mapEffect((c) => Effect.delay(Effect.succeed(c), '100 millis')),
 			Stream.map<string, CharacterClassification>((c) => {
-				console.log(`processing character: ${c}`);
 				const isVowel = /^[aeiou]$/i.test(c);
 				if (isVowel) {
 					return {
@@ -57,20 +51,26 @@ const getEffect = (event: RequestEvent) =>
 					type: 'other',
 					character: c
 				};
-			}),
-			Stream.map(
-				(data): Sse.Event => ({
-					_tag: 'Event',
-					event: 'data',
-					id: undefined,
-					data: JSON.stringify(data)
-				})
-			),
-			Stream.map(Sse.encoder.write),
-			Stream.toReadableStream()
+			})
 		);
 
-		return new Response(baseStream);
+		const [respConsumer, bgConsumer] = yield* Stream.broadcast(baseStream, 2, {
+			capacity: 'unbounded'
+		});
+
+		yield* Stream.runForEach(bgConsumer, (item) =>
+			Effect.gen(function* () {
+				yield* Console.log(`IN RESP CONSUMER item: ${item.character}`);
+			})
+		).pipe(Effect.forkDaemon);
+
+		const readableStream = pipe(
+			respConsumer,
+			Stream.tap((item) => Console.log(`IN TAP item: ${item.character}`)),
+			Stream.toReadableStream
+		);
+
+		return message;
 	});
 
 export const POST = async (event) => {
@@ -79,11 +79,10 @@ export const POST = async (event) => {
 		Effect.exit,
 		Effect.map((exit) =>
 			Exit.match(exit, {
-				onSuccess: (response) => {
-					// waitUntil(Effect.runPromise(bgWork));
+				onSuccess: (message) => {
 					return {
 						type: 'success' as const,
-						response
+						message
 					};
 				},
 				onFailure: (cause) => {
@@ -107,7 +106,7 @@ export const POST = async (event) => {
 	);
 
 	if (result.type === 'success') {
-		return result.response;
+		return new Response(result.message);
 	}
 
 	return error(result.status, { message: result.message });
