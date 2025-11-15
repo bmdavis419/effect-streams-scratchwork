@@ -54,22 +54,6 @@ const getEffect = (event: RequestEvent) =>
 			})
 		);
 
-		const [respConsumer, bgConsumer] = yield* Stream.broadcast(baseStream, 2, {
-			capacity: 'unbounded'
-		});
-
-		yield* Stream.runForEach(bgConsumer, (item) =>
-			Effect.gen(function* () {
-				yield* Console.log(`IN RESP CONSUMER item: ${item.character}`);
-			})
-		).pipe(Effect.forkDaemon);
-
-		const readableStream = pipe(
-			respConsumer,
-			Stream.tap((item) => Console.log(`IN TAP item: ${item.character}`)),
-			Stream.toReadableStream
-		);
-
 		return message;
 	});
 

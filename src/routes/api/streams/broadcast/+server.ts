@@ -1,4 +1,16 @@
-import { Console, Effect, Exit, Fiber, pipe, Queue, Runtime, Schema, Stream, Take } from 'effect';
+import {
+	Console,
+	Effect,
+	Exit,
+	Fiber,
+	pipe,
+	Queue,
+	Runtime,
+	Schema,
+	Scope,
+	Stream,
+	Take
+} from 'effect';
 import { error, type RequestEvent } from '@sveltejs/kit';
 import type { CharacterClassification } from '$lib/shared/types';
 import * as Sse from '@effect/experimental/Sse';
@@ -8,90 +20,93 @@ const bodySchema = Schema.Struct({
 });
 
 const getEffect = (event: RequestEvent) =>
-	Effect.scoped(
-		Effect.gen(function* () {
-			const { message } = yield* pipe(
-				Effect.tryPromise({
-					try: () => event.request.json(),
-					catch: (e) => ({
+	Effect.gen(function* () {
+		const scope = yield* Scope.make();
+		const { message } = yield* pipe(
+			Effect.tryPromise({
+				try: () => event.request.json(),
+				catch: (e) => ({
+					status: 400,
+					message: `Got invalid json: ${e}`
+				})
+			}),
+			Effect.flatMap((body) =>
+				Schema.decode(bodySchema)(body).pipe(
+					Effect.mapError((e) => ({
 						status: 400,
-						message: `Got invalid json: ${e}`
-					})
-				}),
-				Effect.flatMap((body) =>
-					Schema.decode(bodySchema)(body).pipe(
-						Effect.mapError((e) => ({
-							status: 400,
-							message: `Failed to parse body: ${e.message}`
-						}))
-					)
+						message: `Failed to parse body: ${e.message}`
+					}))
 				)
-			);
+			)
+		);
 
-			const characters = message.split('');
+		const characters = message.split('');
 
-			const baseStream = Stream.fromIterable(characters).pipe(
-				Stream.mapEffect((c) => Effect.delay(Effect.succeed(c), '100 millis')),
-				Stream.map<string, CharacterClassification>((c) => {
-					const isVowel = /^[aeiou]$/i.test(c);
-					if (isVowel) {
-						return {
-							type: 'vowel',
-							character: c
-						};
-					}
-
-					const isConsonant = /^[bcdfghjklmnpqrstvwxyz]$/i.test(c);
-					if (isConsonant) {
-						return {
-							type: 'consonant',
-							character: c
-						};
-					}
-
+		const baseStream = Stream.fromIterable(characters).pipe(
+			Stream.mapEffect((c) => Effect.delay(Effect.succeed(c), '100 millis')),
+			Stream.map<string, CharacterClassification>((c) => {
+				const isVowel = /^[aeiou]$/i.test(c);
+				if (isVowel) {
 					return {
-						type: 'other',
+						type: 'vowel',
 						character: c
 					};
-				})
-			);
+				}
 
-			const runtime = yield* Effect.runtime();
+				const isConsonant = /^[bcdfghjklmnpqrstvwxyz]$/i.test(c);
+				if (isConsonant) {
+					return {
+						type: 'consonant',
+						character: c
+					};
+				}
 
-			const [respStream, bgStream] = yield* Stream.broadcast(baseStream, 2, {
-				capacity: 'unbounded'
-			});
+				return {
+					type: 'other',
+					character: c
+				};
+			})
+			// Stream.ensuring(
+			// 	Effect.gen(function* () {
+			// 		yield* Console.log(`we done`);
+			// 	})
+			// )
+		);
 
-			Runtime.runFork(runtime)(
-				pipe(
-					bgStream,
-					Stream.runForEach((data) =>
-						Console.log(`background stream: ${data.character} is a ${data.type}`)
-					)
-				)
-			);
+		const [respStream, bgStream] = yield* Stream.broadcast(baseStream, 2, {
+			capacity: 'unbounded'
+		}).pipe(Scope.extend(scope));
 
-			const sseStream = pipe(
-				respStream,
-				Stream.tap((data) => Console.log(`stuff getting sent to the readable stream: ${data}`)),
-				Stream.map(
-					(data): Sse.Event => ({
-						_tag: 'Event',
-						event: 'data',
-						id: undefined,
-						data: JSON.stringify(data)
-					})
+		yield* Effect.forkIn(scope)(
+			pipe(
+				bgStream,
+				Stream.runForEach((data) =>
+					Console.log(`background stream: ${data.character} is a ${data.type}`)
 				),
-				Stream.map(Sse.encoder.write)
-			);
+				Effect.ensuring(Scope.close(scope, Exit.void))
+			)
+		);
 
-			const readableStream = Stream.toReadableStreamRuntime(sseStream, runtime);
+		const sseStream = pipe(
+			respStream,
+			Stream.map(
+				(data): Sse.Event => ({
+					_tag: 'Event',
+					event: 'data',
+					id: undefined,
+					data: JSON.stringify(data)
+				})
+			),
+			Stream.map(Sse.encoder.write),
+			Stream.toReadableStream
+		);
 
-			return {
-				response: new Response(readableStream)
-			};
-		})
-	);
+		return {
+			response: new Response(sseStream)
+		};
+	});
+
+// try and hook the scope up to the POST request...
 
 export const POST = async (event) => {
 	const result = await pipe(
