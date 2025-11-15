@@ -1,16 +1,4 @@
-import {
-	Console,
-	Effect,
-	Exit,
-	Fiber,
-	pipe,
-	Queue,
-	Runtime,
-	Schema,
-	Scope,
-	Stream,
-	Take
-} from 'effect';
+import { Cause, Console, Effect, Exit, pipe, Schema, Scope, Stream } from 'effect';
 import { error, type RequestEvent } from '@sveltejs/kit';
 import type { CharacterClassification } from '$lib/shared/types';
 import * as Sse from '@effect/experimental/Sse';
@@ -66,11 +54,6 @@ const getEffect = (event: RequestEvent) =>
 					character: c
 				};
 			})
-			// Stream.ensuring(
-			// 	Effect.gen(function* () {
-			// 		yield* Console.log(`we done`);
-			// 	})
-			// )
 		);
 
 		const [respStream, bgStream] = yield* Stream.broadcast(baseStream, 2, {
@@ -111,32 +94,31 @@ const getEffect = (event: RequestEvent) =>
 export const POST = async (event) => {
 	const result = await pipe(
 		getEffect(event),
-		Effect.exit,
-		Effect.map((exit) =>
-			Exit.match(exit, {
-				onSuccess: ({ response }) => {
-					return {
-						type: 'success' as const,
-						response
-					};
-				},
-				onFailure: (cause) => {
-					if (cause._tag === 'Fail') {
-						return {
-							type: 'error' as const,
-							status: cause.error.status,
-							message: cause.error.message
-						};
-					}
-					console.error('unknown failure at /api/streams/first', cause.toString());
+		Effect.matchCause({
+			onSuccess: ({ response }) => {
+				return {
+					type: 'success' as const,
+					response
+				};
+			},
+			onFailure: (cause) => {
+				const failures = Array.from(Cause.failures(cause));
+				// TODO: handle multiple failures
+				if (cause._tag === 'Fail') {
 					return {
 						type: 'error' as const,
-						status: 500,
-						message: 'Unknown error'
+						status: cause.error.status,
+						message: cause.error.message
 					};
 				}
-			})
-		),
+				console.error('unknown failure at /api/streams/first', cause.toString());
+				return {
+					type: 'error' as const,
+					status: 500,
+					message: 'Unknown error'
+				};
+			}
+		}),
 		Effect.runPromise
 	);
 
