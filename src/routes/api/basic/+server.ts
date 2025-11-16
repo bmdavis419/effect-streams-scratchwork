@@ -1,35 +1,15 @@
-import { Cause, Console, Effect, Exit, pipe, Schema, Scope, Stream } from 'effect';
-import { error, type RequestEvent } from '@sveltejs/kit';
+import { Console, Effect, Exit, pipe, Scope, Stream } from 'effect';
+import { type RequestEvent } from '@sveltejs/kit';
 import type { CharacterClassification } from '$lib/shared/types';
 import * as Sse from '@effect/experimental/Sse';
-import { TaggedError } from 'effect/Data';
 import { waitUntil } from '@vercel/functions';
 import { HttpServerResponse } from '@effect/platform';
 import { betterBroadcastBodySchema } from '$lib/shared/schemas.js';
+import { getAndValidateRequestBody, svelteEndpointWrapperEffect } from '$lib/endpoint-stuff';
 
-class EndpointError extends TaggedError('EndpointError') {
-	status: number;
-	message: string;
-	constructor(status: number, message: string) {
-		super();
-		this.status = status;
-		this.message = message;
-	}
-}
-
-const getEffect = (event: RequestEvent) =>
+const postEndpointEffect = (event: RequestEvent) =>
 	Effect.gen(function* () {
-		const { message } = yield* pipe(
-			Effect.tryPromise({
-				try: () => event.request.json(),
-				catch: (e) => new EndpointError(400, `Got invalid json: ${e}`)
-			}),
-			Effect.flatMap((body) =>
-				Schema.decode(betterBroadcastBodySchema)(body).pipe(
-					Effect.mapError((e) => new EndpointError(400, `Failed to parse body: ${e.message}`))
-				)
-			)
-		);
+		const { message } = yield* getAndValidateRequestBody(event, betterBroadcastBodySchema);
 
 		const characters = message.split('');
 
@@ -98,47 +78,6 @@ const getEffect = (event: RequestEvent) =>
 		return sseStreamResponse;
 	});
 
-const svelteEndpointWrapperEffect = async (
-	effect: Effect.Effect<Response, EndpointError, never>
-): Promise<Response> => {
-	const result = await pipe(
-		effect,
-		Effect.matchCause({
-			onSuccess: (response) => {
-				return {
-					type: 'success' as const,
-					response
-				};
-			},
-			onFailure: (cause) => {
-				const failures = Array.from(Cause.failures(cause));
-
-				if (failures.length > 0) {
-					const failure = failures[0];
-					return {
-						type: 'error' as const,
-						status: failure.status,
-						message: failure.message
-					};
-				}
-
-				return {
-					type: 'error' as const,
-					status: 500,
-					message: 'Unknown error'
-				};
-			}
-		}),
-		Effect.runPromise
-	);
-
-	if (result.type === 'success') {
-		return result.response;
-	}
-
-	return error(result.status, { message: result.message });
-};
-
 export const POST = async (event) => {
-	return await svelteEndpointWrapperEffect(getEffect(event));
+	return await svelteEndpointWrapperEffect(postEndpointEffect(event));
 };

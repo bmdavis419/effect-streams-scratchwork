@@ -36,6 +36,7 @@
 		"@vercel/functions": "^3.3.2",
 		"ai": "^5.0.93",
 		"effect": "^3.19.3",
+		"marked": "^17.0.0",
 		"neverthrow": "^8.2.0",
 		"runed": "^0.36.0",
 		"zod": "^4.1.12"
