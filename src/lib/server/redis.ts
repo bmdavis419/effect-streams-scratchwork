@@ -87,20 +87,14 @@ const redisService = Effect.gen(function* () {
 		Effect.gen(function* () {
 			const streamKey = yield* makeStreamKey(key);
 
-			yield* Effect.all(
-				[
-					Effect.tryPromise({
-						try: () => mainRedisClient.publish(streamKey, value),
-						catch: (error) => new RedisError(error)
-					}),
-
-					Effect.tryPromise({
-						try: () => mainRedisClient.xadd(streamKey, '*', 'chunk', value),
-						catch: (error) => new RedisError(error)
-					})
-				],
-				{ concurrency: 'unbounded' }
-			);
+			yield* Effect.tryPromise({
+				try: () =>
+					Promise.all([
+						mainRedisClient.publish(streamKey, value),
+						mainRedisClient.xadd(streamKey, '*', 'chunk', value)
+					]),
+				catch: (error) => new RedisError(error)
+			});
 		});
 
 	return {

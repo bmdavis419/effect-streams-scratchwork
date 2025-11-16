@@ -8,7 +8,7 @@
 	import { agentRequestBodySchema } from '$lib/shared/schemas';
 	import { makeParser, type AnyEvent } from '@effect/experimental/Sse';
 	import { BrowserHttpClient } from '@effect/platform-browser';
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 
 	const searchParamsSchema = z.object({
 		question: z.string().default(''),
@@ -173,6 +173,13 @@
 		if (!resumeKey || isLoading) return;
 		curFiber = pipe(resumeAgentEffect, Effect.runFork);
 	};
+
+	onDestroy(() => {
+		if (curFiber) {
+			console.log('INTERRUPTING FIBER');
+			Fiber.interrupt(curFiber);
+		}
+	});
 
 	onMount(() => {
 		if (resumeKey && question) {

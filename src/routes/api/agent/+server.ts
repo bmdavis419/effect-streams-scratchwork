@@ -14,6 +14,10 @@ const getEndpointEffect = (event: RequestEvent) =>
 	Effect.gen(function* () {
 		const params = event.url.searchParams;
 
+		event.request.signal.addEventListener('abort', () => {
+			console.log('THE GET ENDPOINT IS BEING ABORTED LISTENER');
+		});
+
 		event.request.signal.onabort = () => {
 			console.log('THE GET ENDPOINT IS BEING ABORTED');
 		};
@@ -38,6 +42,7 @@ const getEndpointEffect = (event: RequestEvent) =>
 			),
 			Stream.map(encoder.write),
 			Stream.encodeText,
+			Stream.ensuring(Effect.logInfo('GET STREAM is ending')),
 			HttpServerResponse.stream,
 			HttpServerResponse.toWeb
 		);
@@ -52,6 +57,10 @@ const getEndpointEffect = (event: RequestEvent) =>
 const postEndpointEffect = (event: RequestEvent) =>
 	Effect.gen(function* () {
 		const { question } = yield* getAndValidateRequestBody(event, agentRequestBodySchema);
+
+		event.request.signal.addEventListener('abort', () => {
+			console.log('THE POST ENDPOINT IS BEING ABORTED LISTENER');
+		});
 
 		event.request.signal.onabort = () => {
 			console.log('THE POST ENDPOINT IS BEING ABORTED');
@@ -71,6 +80,7 @@ const postEndpointEffect = (event: RequestEvent) =>
 			),
 			Stream.map(encoder.write),
 			Stream.encodeText,
+			Stream.ensuring(Effect.logInfo('POST STREAM is ending')),
 			HttpServerResponse.stream,
 			HttpServerResponse.toWeb
 		);
