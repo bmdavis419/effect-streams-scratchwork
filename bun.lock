@@ -6,6 +6,8 @@
       "name": "effect-svelte-stream",
       "dependencies": {
         "@effect/experimental": "^0.57.1",
+        "@effect/platform": "^0.93.2",
+        "@effect/platform-browser": "^0.73.0",
         "@vercel/functions": "^3.3.2",
         "effect": "^3.19.3",
         "neverthrow": "^8.2.0",
@@ -33,6 +35,8 @@
     "@effect/experimental": ["@effect/experimental@0.57.1", "", { "dependencies": { "uuid": "^11.0.3" }, "peerDependencies": { "@effect/platform": "^0.93.1", "effect": "^3.19.3", "ioredis": "^5", "lmdb": "^3" }, "optionalPeers": ["ioredis", "lmdb"] }, "sha512-18UIT64L0F0Kd6MO+bJAIcHhZGiuNeTpiM0GwMwe206r+rmFdIB6v/fd4BIOkfYJ1EFxvm/lt4wRjTtSn+6kfw=="],
 
     "@effect/platform": ["@effect/platform@0.93.2", "", { "dependencies": { "find-my-way-ts": "^0.1.6", "msgpackr": "^1.11.4", "multipasta": "^0.2.7" }, "peerDependencies": { "effect": "^3.19.3" } }, "sha512-IFWF2xuz37tZbyEsf3hwBlcYYqbqJho+ZM871CG92lWJSjcTgvmjCy77qnV0QhTWVdh9BMs12QKzQCMlqz4cJQ=="],
+
+    "@effect/platform-browser": ["@effect/platform-browser@0.73.0", "", { "dependencies": { "multipasta": "^0.2.7" }, "peerDependencies": { "@effect/platform": "^0.93.0", "effect": "^3.19.0" } }, "sha512-G/LWu+roBHtjb9JEpCYe47XG0oB2xlUIp7fBQznDPYYMksqtrusEdtVtAWfPhO21aNvVmv7+agonisxK2vGaCQ=="],
 
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.25.12", "", { "os": "aix", "cpu": "ppc64" }, "sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA=="],
 

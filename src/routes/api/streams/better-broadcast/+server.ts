@@ -1,9 +1,11 @@
-import { Cause, Console, Effect, Exit, Logger, pipe, Schema, Scope, Stream } from 'effect';
+import { Cause, Console, Effect, Exit, pipe, Schema, Scope, Stream } from 'effect';
 import { error, type RequestEvent } from '@sveltejs/kit';
 import type { CharacterClassification } from '$lib/shared/types';
 import * as Sse from '@effect/experimental/Sse';
 import { TaggedError } from 'effect/Data';
 import { waitUntil } from '@vercel/functions';
+import { HttpServerResponse } from '@effect/platform';
+import { betterBroadcastBodySchema } from '$lib/shared/schemas.js';
 
 class EndpointError extends TaggedError('EndpointError') {
 	status: number;
@@ -15,20 +17,15 @@ class EndpointError extends TaggedError('EndpointError') {
 	}
 }
 
-const bodySchema = Schema.Struct({
-	message: Schema.String
-});
-
 const getEffect = (event: RequestEvent) =>
 	Effect.gen(function* () {
-		const scope = yield* Scope.make();
 		const { message } = yield* pipe(
 			Effect.tryPromise({
 				try: () => event.request.json(),
 				catch: (e) => new EndpointError(400, `Got invalid json: ${e}`)
 			}),
 			Effect.flatMap((body) =>
-				Schema.decode(bodySchema)(body).pipe(
+				Schema.decode(betterBroadcastBodySchema)(body).pipe(
 					Effect.mapError((e) => new EndpointError(400, `Failed to parse body: ${e.message}`))
 				)
 			)
@@ -39,7 +36,7 @@ const getEffect = (event: RequestEvent) =>
 		const baseStream = Stream.fromIterable(characters).pipe(
 			Stream.mapEffect((c) => Effect.delay(Effect.succeed(c), '100 millis')),
 			Stream.map<string, CharacterClassification>((c) => {
-				const isVowel = /^[aeiou]$/i.test(c);
+				const isVowel = /^[aeiou]$/i.test(c.toLowerCase());
 				if (isVowel) {
 					return {
 						type: 'vowel',
@@ -47,7 +44,7 @@ const getEffect = (event: RequestEvent) =>
 					};
 				}
 
-				const isConsonant = /^[bcdfghjklmnpqrstvwxyz]$/i.test(c);
+				const isConsonant = /^[bcdfghjklmnpqrstvwxyz]$/i.test(c.toLowerCase());
 				if (isConsonant) {
 					return {
 						type: 'consonant',
@@ -62,7 +59,7 @@ const getEffect = (event: RequestEvent) =>
 			})
 		);
 
-		yield* Effect.logInfo('Starting broadcast stream');
+		const scope = yield* Scope.make();
 
 		const [respStream, bgStream] = yield* Stream.broadcast(baseStream, 2, {
 			capacity: 'unbounded'
@@ -82,7 +79,7 @@ const getEffect = (event: RequestEvent) =>
 
 		yield* Effect.sync(() => waitUntil(Effect.runPromise(bgRunner)));
 
-		const sseStream = pipe(
+		const sseStreamResponse = pipe(
 			respStream,
 			Stream.map(
 				(data): Sse.Event => ({
@@ -93,10 +90,12 @@ const getEffect = (event: RequestEvent) =>
 				})
 			),
 			Stream.map(Sse.encoder.write),
-			Stream.toReadableStream
+			Stream.encodeText,
+			HttpServerResponse.stream,
+			HttpServerResponse.toWeb
 		);
 
-		return new Response(sseStream);
+		return sseStreamResponse;
 	});
 
 const svelteEndpointWrapperEffect = async (

@@ -1,84 +1,79 @@
 <script lang="ts">
 	import logo from '$lib/assets/favicon.svg';
+	import { makeParser } from '@effect/experimental/Sse';
+	import { BrowserHttpClient } from '@effect/platform-browser';
+	import { HttpBody, HttpClient } from '@effect/platform';
+	import { Effect, Fiber, pipe, Stream } from 'effect';
 	import type { CharacterClassification } from '$lib/shared/types';
-	import { makeChannel } from '@effect/experimental/Sse';
-	import { Channel, Console, Effect, pipe, Stream } from 'effect';
+	import { betterBroadcastBodySchema } from '$lib/shared/schemas';
 
-	let abortController: AbortController | null = null;
+	let curFiber = $state<Fiber.RuntimeFiber<void, never> | null>(null);
+	const isStreamRunning = $derived(curFiber !== null);
 
-	const callTestStreamEffect = (endpoint: string) =>
-		Effect.gen(function* () {
-			yield* Effect.scoped(
-				Effect.gen(function* () {
-					abortController = new AbortController();
-					const resBody = yield* pipe(
-						Effect.tryPromise({
-							try: () =>
-								fetch(endpoint, {
-									method: 'POST',
-									body: JSON.stringify({
-										message: 'this is pain'
-									}),
-									signal: abortController?.signal
-								}),
-							catch: (e) => {
-								return new Error(`Failed to fetch first stream: ${e}`);
-							}
-						}),
-						Effect.flatMap((response) => {
-							if (!response.ok || !response.body) {
-								return Effect.fail(new Error('Failed to fetch first stream'));
-							}
-							return Effect.succeed(response.body);
-						})
-					);
+	let totalVowels = $state(0);
+	let totalConsonants = $state(0);
+	let totalOther = $state(0);
+	const total = $derived(totalVowels + totalConsonants + totalOther);
 
-					const channel = makeChannel();
-
-					const stream = Stream.fromReadableStream({
-						evaluate: () => resBody,
-						onError: (e) => {
-							return new Error(`Failed to create stream from readable stream: ${e}`);
-						}
-					});
-
-					// doing this because the generics are not getting passed correctly in a pipe from the original stream
-					const parsedStream = pipe(
-						Stream.decodeText(stream),
-						Stream.toChannel,
-						(ch) => Channel.pipeTo(ch, channel),
-						Stream.fromChannel,
-						Stream.map((event) => JSON.parse(event.data) as CharacterClassification)
-					);
-
-					yield* pipe(
-						parsedStream,
-						Stream.runForEach((event) => Console.log(`${event.character} is a ${event.type}`))
-					);
-				})
-			);
+	const callBetterBroadcast = Effect.gen(function* () {
+		const client = yield* HttpClient.HttpClient;
+		const body = yield* HttpBody.jsonSchema(betterBroadcastBodySchema)({
+			message: 'This is a test...'
+		});
+		const response = yield* client.post('/api/streams/better-broadcast', {
+			body
 		});
 
-	const handleFetchFirstStream = async () => {
-		try {
-			await Effect.runPromise(callTestStreamEffect('/api/streams/basic'));
-		} catch (e) {
-			console.error(e);
+		if (response.status !== 200) {
+			const body = (yield* response.json) as { message: string };
+			return yield* Effect.fail(new Error(body.message));
 		}
-	};
-	const handleFetchBroadcastStream = async () => {
-		try {
-			await Effect.runPromise(callTestStreamEffect('/api/streams/broadcast'));
-		} catch (e) {
-			console.error(e);
-		}
+
+		const parser = makeParser((event) => {
+			if (event._tag === 'Event') {
+				const data = JSON.parse(event.data) as CharacterClassification;
+				switch (data.type) {
+					case 'vowel':
+						totalVowels++;
+						break;
+					case 'consonant':
+						totalConsonants++;
+						break;
+					case 'other':
+						totalOther++;
+						break;
+				}
+			}
+		});
+
+		yield* Stream.decodeText(response.stream).pipe(
+			Stream.runForEach((event) => Effect.sync(() => parser.feed(event)))
+		);
+	}).pipe(
+		Effect.provide(BrowserHttpClient.layerXMLHttpRequest),
+		Effect.matchCause({
+			onSuccess: () => console.log('Success'),
+			onFailure: (cause) => console.error('hit failure', cause)
+		}),
+		Effect.ensuring(
+			Effect.sync(() => {
+				console.log('Stream ended');
+				curFiber = null;
+			})
+		)
+	);
+
+	const handleStartStream = () => {
+		totalVowels = 0;
+		totalConsonants = 0;
+		totalOther = 0;
+		curFiber = pipe(callBetterBroadcast, Effect.runFork);
 	};
 
-	const handleFetchBetterBroadcastStream = async () => {
-		try {
-			await Effect.runPromise(callTestStreamEffect('/api/streams/better-broadcast'));
-		} catch (e) {
-			console.error(e);
+	const handleStopStream = async () => {
+		if (curFiber) {
+			await pipe(curFiber, Fiber.interrupt, Effect.runPromise);
+			curFiber = null;
 		}
 	};
 </script>
@@ -90,18 +85,21 @@
 	</div>
 	<p class="text-center text-lg text-neutral-500">We're doing some testing here...</p>
 
-	<button onclick={handleFetchFirstStream} class="rounded-md bg-primary px-4 py-2 text-white"
-		>Fetch First Stream</button
-	>
-	<button onclick={handleFetchBroadcastStream} class="rounded-md bg-primary px-4 py-2 text-white"
-		>Fetch Broadcast Stream</button
+	<p>STATUS: {isStreamRunning ? 'RUNNING' : 'NOT RUNNING'}</p>
+
+	<button
+		onclick={handleStartStream}
+		class="rounded-md bg-primary px-4 py-2 text-white disabled:opacity-50"
+		disabled={isStreamRunning}>Fetch Better Broadcast Stream</button
 	>
 	<button
-		onclick={handleFetchBetterBroadcastStream}
-		class="rounded-md bg-primary px-4 py-2 text-white">Fetch Better Broadcast Stream</button
+		onclick={handleStopStream}
+		class="rounded-md bg-red-500 px-4 py-2 text-white disabled:opacity-50"
+		disabled={!isStreamRunning}>Abort</button
 	>
-	<button
-		onclick={() => abortController?.abort()}
-		class="rounded-md bg-red-500 px-4 py-2 text-white">Abort</button
-	>
+
+	<p>Total vowels: {totalVowels}</p>
+	<p>Total consonants: {totalConsonants}</p>
+	<p>Total other: {totalOther}</p>
+	<p>Total: {total}</p>
 </main>
