@@ -3,7 +3,7 @@ import { Effect, Scope } from 'effect';
 import { TaggedError } from 'effect/Data';
 import Redis from 'ioredis';
 
-const redisClient = new Redis(env.REDIS_URL);
+// ok so apparently this is causing issues because the redis instance is getting shared around between redisClient and subscribeClient
 
 // yea ik the above is not the effect-y way to get the redis client but it's nice for serverless so leave me alone
 
@@ -29,10 +29,11 @@ const redisService = Effect.gen(function* () {
 
 			// yea ik I should be duplicating the client above but then the scopes get hellish again and I don't care enough leave me alone
 			const subscribeClient = yield* Effect.sync(() => new Redis(env.REDIS_URL));
+			const redisClient = yield* Effect.sync(() => new Redis(env.REDIS_URL));
 
 			yield* Scope.addFinalizer(
 				scope,
-				Effect.promise(() => subscribeClient.quit())
+				Effect.promise(() => Promise.all([subscribeClient.quit(), redisClient.quit()]))
 			);
 
 			yield* Effect.sync(() =>
@@ -71,6 +72,7 @@ const redisService = Effect.gen(function* () {
 
 	const appendToStream = (key: string, value: string) =>
 		Effect.gen(function* () {
+			const redisClient = yield* Effect.sync(() => new Redis(env.REDIS_URL));
 			const streamKey = yield* makeStreamKey(key);
 
 			yield* Effect.all(
@@ -87,6 +89,8 @@ const redisService = Effect.gen(function* () {
 				],
 				{ concurrency: 'unbounded' }
 			);
+
+			yield* Effect.promise(() => redisClient.quit());
 		});
 
 	return {
