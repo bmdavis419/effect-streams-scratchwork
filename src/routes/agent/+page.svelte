@@ -86,7 +86,6 @@
 						tool: null
 					});
 					break;
-
 				case 'tool-result':
 					if (chunk.dynamic) break;
 					const existingTool = conversation.find(
@@ -161,7 +160,7 @@
 	};
 </script>
 
-<div class="flex min-h-screen flex-col">
+<div class="mx-auto flex min-h-screen w-4xl flex-col">
 	<div class="flex-1 overflow-y-auto p-6 pb-32">
 		<div class=" mx-auto max-w-4xl">
 			<h1 class="mb-8 text-left text-3xl font-bold text-white">Question Asker Demo</h1>

@@ -1,5 +1,6 @@
 import { OPENROUTER_API_KEY } from '$env/static/private';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { waitUntil } from '@vercel/functions';
 import {
 	stepCountIs,
 	streamText,
@@ -8,9 +9,10 @@ import {
 	type Tool,
 	type ToolSet
 } from 'ai';
-import { Effect, Stream } from 'effect';
+import { Effect, Exit, pipe, Scope, Stream } from 'effect';
 import { TaggedError } from 'effect/Data';
 import z from 'zod';
+import { RedisService } from './redis';
 
 const openrouter = createOpenRouter({
 	apiKey: OPENROUTER_API_KEY
@@ -36,8 +38,6 @@ const writeMemoryTool = tool({
           `)
 	}),
 	execute: async ({ memory }) => {
-		console.log('saving memory to database');
-		console.log(memory);
 		return {
 			success: true,
 			memory
@@ -98,7 +98,31 @@ export const runQuestionAskerAgent = (question: string) =>
 
 		const stream = Stream.fromAsyncIterable(rawStream, (e) => new AgentError(e));
 
-		// TODO: split this boy into redis...
+		const scope = yield* Scope.make();
 
-		return stream;
+		const [respStream, bgStream] = yield* Stream.broadcast(stream, 2, {
+			capacity: 'unbounded'
+		}).pipe(Scope.extend(scope));
+
+		const redis = yield* RedisService;
+
+		const streamRunId = yield* Effect.sync(() => crypto.randomUUID());
+
+		const bgRunner = Effect.forkIn(scope)(
+			pipe(
+				bgStream,
+				Stream.runForEach((data) =>
+					Effect.gen(function* () {
+						yield* redis.appendToStream(streamRunId, JSON.stringify(data));
+					})
+				),
+				Effect.ensuring(
+					Effect.all([Scope.close(scope, Exit.void), Effect.logInfo('Background stream closed')])
+				)
+			)
+		);
+
+		yield* Effect.sync(() => waitUntil(Effect.runPromise(bgRunner)));
+
+		return respStream;
 	});
