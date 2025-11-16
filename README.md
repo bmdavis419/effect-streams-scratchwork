@@ -1,1 +1,3 @@
 THE USEFUL CODE IS IN `src/routes/api/streams/broadcast/+server.ts`
+
+## TODO: add in a basic ai stream here, have it persist into redis and do the resuming stuff. Basically just test out what I would need to do to make it work in river...
