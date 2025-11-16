@@ -4,7 +4,7 @@
 	"fluid": true,
 	"regions": ["sfo1"],
 	"functions": {
-		"*": {
+		"**/*": {
 			"supportsCancellation": true
 		}
 	}
