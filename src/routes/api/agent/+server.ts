@@ -14,14 +14,6 @@ const getEndpointEffect = (event: RequestEvent) =>
 	Effect.gen(function* () {
 		const params = event.url.searchParams;
 
-		event.request.signal.addEventListener('abort', () => {
-			console.log('THE GET ENDPOINT IS BEING ABORTED LISTENER');
-		});
-
-		event.request.signal.onabort = () => {
-			console.log('THE GET ENDPOINT IS BEING ABORTED');
-		};
-
 		const resumeKey = params.get('resumeKey');
 
 		if (!resumeKey) {
@@ -29,6 +21,15 @@ const getEndpointEffect = (event: RequestEvent) =>
 		}
 
 		const stream = yield* resumeQuestionAskerAgent(resumeKey);
+
+		const abortEffect = Effect.async((resume) => {
+			const handler = () => {
+				Effect.runSync(Effect.logInfo('ABORTING GET STREAM'));
+				resume(Effect.void);
+			};
+			event.request.signal.addEventListener('abort', handler);
+			return Effect.sync(() => event.request.signal.removeEventListener('abort', handler));
+		});
 
 		const sseStreamResponse = pipe(
 			stream,
@@ -42,6 +43,7 @@ const getEndpointEffect = (event: RequestEvent) =>
 			),
 			Stream.map(encoder.write),
 			Stream.encodeText,
+			Stream.interruptWhen(abortEffect),
 			Stream.ensuring(Effect.logInfo('GET STREAM is ending')),
 			HttpServerResponse.stream,
 			HttpServerResponse.toWeb
@@ -58,15 +60,16 @@ const postEndpointEffect = (event: RequestEvent) =>
 	Effect.gen(function* () {
 		const { question } = yield* getAndValidateRequestBody(event, agentRequestBodySchema);
 
-		event.request.signal.addEventListener('abort', () => {
-			console.log('THE POST ENDPOINT IS BEING ABORTED LISTENER');
-		});
-
-		event.request.signal.onabort = () => {
-			console.log('THE POST ENDPOINT IS BEING ABORTED');
-		};
-
 		const stream = yield* runQuestionAskerAgent(question);
+
+		const abortEffect = Effect.async((resume) => {
+			const handler = () => {
+				Effect.runSync(Effect.logInfo('ABORTING POST STREAM'));
+				resume(Effect.void);
+			};
+			event.request.signal.addEventListener('abort', handler);
+			return Effect.sync(() => event.request.signal.removeEventListener('abort', handler));
+		});
 
 		const sseStreamResponse = pipe(
 			stream,
@@ -80,6 +83,7 @@ const postEndpointEffect = (event: RequestEvent) =>
 			),
 			Stream.map(encoder.write),
 			Stream.encodeText,
+			Stream.interruptWhen(abortEffect),
 			Stream.ensuring(Effect.logInfo('POST STREAM is ending')),
 			HttpServerResponse.stream,
 			HttpServerResponse.toWeb
