@@ -14,6 +14,10 @@ const getEndpointEffect = (event: RequestEvent) =>
 	Effect.gen(function* () {
 		const params = event.url.searchParams;
 
+		event.request.signal.onabort = () => {
+			console.log('THE GET ENDPOINT IS BEING ABORTED');
+		};
+
 		const resumeKey = params.get('resumeKey');
 
 		if (!resumeKey) {
@@ -48,6 +52,10 @@ const getEndpointEffect = (event: RequestEvent) =>
 const postEndpointEffect = (event: RequestEvent) =>
 	Effect.gen(function* () {
 		const { question } = yield* getAndValidateRequestBody(event, agentRequestBodySchema);
+
+		event.request.signal.onabort = () => {
+			console.log('THE POST ENDPOINT IS BEING ABORTED');
+		};
 
 		const stream = yield* runQuestionAskerAgent(question);
 
