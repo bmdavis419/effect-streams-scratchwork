@@ -1,3 +1,3 @@
-THE USEFUL CODE IS IN `src/routes/api/streams/broadcast/+server.ts`
+this is an example of how to do resumable streams in sveltekit powered by effect and redis.
 
-## TODO: add in a basic ai stream here, have it persist into redis and do the resuming stuff. Basically just test out what I would need to do to make it work in river...
+this is so much easier than doing it with raw web streams it's hilarious

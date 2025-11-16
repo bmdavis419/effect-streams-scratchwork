@@ -6,8 +6,9 @@
 	import { Effect, Fiber, pipe, Stream } from 'effect';
 	import { HttpBody, HttpClient } from '@effect/platform';
 	import { agentRequestBodySchema } from '$lib/shared/schemas';
-	import { makeParser } from '@effect/experimental/Sse';
+	import { makeParser, type AnyEvent } from '@effect/experimental/Sse';
 	import { BrowserHttpClient } from '@effect/platform-browser';
+	import { onMount } from 'svelte';
 
 	const searchParamsSchema = z.object({
 		question: z.string().default(''),
@@ -39,8 +40,57 @@
 	let resumeKey = $derived(params.resumeKey);
 	const trimmedQuestion = $derived(question.trim());
 
+	const handleEventStreamEntry = (event: AnyEvent) => {
+		if (event._tag !== 'Event') return;
+
+		const chunk = JSON.parse(event.data) as AgentChunk;
+
+		switch (chunk.type) {
+			case 'SPECIAL_START_CHUNK':
+				params.resumeKey = chunk.id;
+				break;
+			case 'text-start':
+				conversation.push({
+					role: 'assistant',
+					id: chunk.id,
+					content: '',
+					parsedContent: ''
+				});
+				break;
+			case 'text-delta':
+				const existingAssistant = conversation.find(
+					(c) => c.role === 'assistant' && c.id === chunk.id
+				);
+				if (existingAssistant && existingAssistant.role === 'assistant') {
+					const newContent = existingAssistant.content + chunk.text;
+					existingAssistant.content = newContent;
+					existingAssistant.parsedContent = marked.parse(newContent, { async: false });
+				}
+				break;
+			case 'tool-input-start':
+				conversation.push({
+					role: 'tool',
+					id: chunk.id,
+					tool: null
+				});
+				break;
+			case 'tool-result':
+				if (chunk.dynamic) break;
+				const existingTool = conversation.find(
+					(c) => c.role === 'tool' && c.id === chunk.toolCallId
+				);
+				if (existingTool && existingTool.role === 'tool') {
+					existingTool.tool = {
+						name: chunk.toolName,
+						input: chunk.input,
+						output: chunk.output
+					};
+				}
+				break;
+		}
+	};
+
 	const resumeAgentEffect = Effect.gen(function* () {
-		console.log('RESUMING AGENT', resumeKey);
 		if (!resumeKey) return;
 
 		const client = yield* HttpClient.HttpClient;
@@ -50,18 +100,24 @@
 			return yield* Effect.fail(new Error('Failed to resume agent'));
 		}
 
-		const parser = makeParser((event) => {
-			if (event._tag !== 'Event') return;
-
-			const chunk = JSON.parse(event.data) as AgentChunk;
-
-			console.log('FROM RESUME:', chunk.type);
-		});
+		const parser = makeParser(handleEventStreamEntry);
 
 		yield* Stream.decodeText(response.stream).pipe(
 			Stream.runForEach((event) => Effect.sync(() => parser.feed(event)))
 		);
-	}).pipe(Effect.provide(BrowserHttpClient.layerXMLHttpRequest));
+	}).pipe(
+		Effect.provide(BrowserHttpClient.layerXMLHttpRequest),
+		Effect.matchCause({
+			onSuccess: () => console.log('Resume success'),
+			onFailure: (cause) => console.error('hit failure', cause)
+		}),
+		Effect.ensuring(
+			Effect.sync(() => {
+				console.log('Resume stream ended');
+				curFiber = null;
+			})
+		)
+	);
 
 	const questionAgentEffect = Effect.gen(function* () {
 		const client = yield* HttpClient.HttpClient;
@@ -79,56 +135,7 @@
 			return yield* Effect.fail(new Error(body.message));
 		}
 
-		const parser = makeParser((event) => {
-			if (event._tag !== 'Event') return;
-
-			const chunk = JSON.parse(event.data) as AgentChunk;
-
-			switch (chunk.type) {
-				case 'SPECIAL_START_CHUNK':
-					params.resumeKey = chunk.id;
-					handleResume();
-					break;
-				case 'text-start':
-					conversation.push({
-						role: 'assistant',
-						id: chunk.id,
-						content: '',
-						parsedContent: ''
-					});
-					break;
-				case 'text-delta':
-					const existingAssistant = conversation.find(
-						(c) => c.role === 'assistant' && c.id === chunk.id
-					);
-					if (existingAssistant && existingAssistant.role === 'assistant') {
-						const newContent = existingAssistant.content + chunk.text;
-						existingAssistant.content = newContent;
-						existingAssistant.parsedContent = marked.parse(newContent, { async: false });
-					}
-					break;
-				case 'tool-input-start':
-					conversation.push({
-						role: 'tool',
-						id: chunk.id,
-						tool: null
-					});
-					break;
-				case 'tool-result':
-					if (chunk.dynamic) break;
-					const existingTool = conversation.find(
-						(c) => c.role === 'tool' && c.id === chunk.toolCallId
-					);
-					if (existingTool && existingTool.role === 'tool') {
-						existingTool.tool = {
-							name: chunk.toolName,
-							input: chunk.input,
-							output: chunk.output
-						};
-					}
-					break;
-			}
-		});
+		const parser = makeParser(handleEventStreamEntry);
 
 		yield* Stream.decodeText(response.stream).pipe(
 			Stream.runForEach((event) => Effect.sync(() => parser.feed(event)))
@@ -136,12 +143,12 @@
 	}).pipe(
 		Effect.provide(BrowserHttpClient.layerXMLHttpRequest),
 		Effect.matchCause({
-			onSuccess: () => console.log('Success'),
+			onSuccess: () => console.log('Question success'),
 			onFailure: (cause) => console.error('hit failure', cause)
 		}),
 		Effect.ensuring(
 			Effect.sync(() => {
-				console.log('Stream ended');
+				console.log('Question stream ended');
 				curFiber = null;
 			})
 		)
@@ -162,11 +169,20 @@
 		curFiber = pipe(questionAgentEffect, Effect.runFork);
 	};
 
-	const handleResume = async () => {
-		// TODO: this should work with the fiber...
-
-		await resumeAgentEffect.pipe(Effect.runPromise);
+	const handleResume = () => {
+		if (!resumeKey || isLoading) return;
+		curFiber = pipe(resumeAgentEffect, Effect.runFork);
 	};
+
+	onMount(() => {
+		if (resumeKey && question) {
+			conversation.push({
+				role: 'user',
+				content: trimmedQuestion
+			});
+			handleResume();
+		}
+	});
 
 	const handleKeyDown = (e: KeyboardEvent) => {
 		if (e.key === 'Enter' && !e.shiftKey) {
