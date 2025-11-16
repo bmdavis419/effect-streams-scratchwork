@@ -1,7 +1,10 @@
 {
+	"$schema": "https://openapi.vercel.sh/vercel.json",
+	"framework": "sveltekit",
+	"fluid": true,
 	"regions": ["sfo1"],
 	"functions": {
-		"api/*": {
+		"**/*": {
 			"supportsCancellation": true
 		}
 	}
