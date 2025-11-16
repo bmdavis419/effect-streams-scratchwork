@@ -1,6 +1,7 @@
 import { error, type RequestEvent } from '@sveltejs/kit';
-import { Cause, Effect, pipe, Schema } from 'effect';
+import { Cause, Effect, ManagedRuntime, pipe, Schema } from 'effect';
 import { TaggedError } from 'effect/Data';
+import { RedisService } from './server/redis';
 
 export class EndpointError extends TaggedError('EndpointError') {
 	status: number;
@@ -25,9 +26,25 @@ export const getAndValidateRequestBody = <A>(event: RequestEvent, schema: Schema
 		)
 	);
 
+let endpointRuntime: ManagedRuntime.ManagedRuntime<RedisService, never> | undefined;
+
+process.on('SIGTERM', () => {
+	endpointRuntime?.dispose();
+});
+
+const getEndpointRuntime = () => {
+	if (!endpointRuntime) {
+		endpointRuntime = ManagedRuntime.make(RedisService.Default);
+	}
+
+	return endpointRuntime;
+};
+
 export const svelteEndpointWrapperEffect = async (
-	effect: Effect.Effect<Response, EndpointError, never>
+	effect: Effect.Effect<Response, EndpointError, RedisService | never>
 ): Promise<Response> => {
+	const rt = getEndpointRuntime();
+
 	const result = await pipe(
 		effect,
 		Effect.matchCause({
@@ -56,7 +73,7 @@ export const svelteEndpointWrapperEffect = async (
 				};
 			}
 		}),
-		Effect.runPromise
+		rt.runPromise
 	);
 
 	if (result.type === 'success') {

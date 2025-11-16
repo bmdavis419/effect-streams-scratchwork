@@ -16,7 +16,19 @@ class RedisError extends TaggedError('RedisError') {
 }
 
 const redisService = Effect.gen(function* () {
+	const scope = yield* Scope.Scope;
+
 	const makeStreamKey = (key: string) => Effect.succeed(`QUESTION-AGENT-STREAM:${key}`);
+
+	const mainRedisClient = yield* Effect.sync(() => new Redis(env.REDIS_URL));
+
+	yield* Scope.addFinalizer(
+		scope,
+		Effect.all([
+			Effect.logInfo('QUITTING MAIN REDIS CLIENT'),
+			Effect.promise(() => mainRedisClient.quit())
+		])
+	);
 
 	const subscribeToStream = (
 		key: string,
@@ -27,27 +39,30 @@ const redisService = Effect.gen(function* () {
 			const streamKey = yield* makeStreamKey(key);
 
 			// yea ik I should be duplicating the client above but then the scopes get hellish again and I don't care enough leave me alone
-			const subscribeClient = yield* Effect.sync(() => new Redis(env.REDIS_URL));
-			const redisClient = yield* Effect.sync(() => new Redis(env.REDIS_URL));
+			const subscribeRedisClient = yield* Effect.sync(() => mainRedisClient.duplicate());
 
 			yield* Scope.addFinalizer(
 				scope,
-				Effect.promise(() => Promise.all([subscribeClient.quit(), redisClient.quit()]))
+				Effect.all([
+					Effect.logInfo('UNSUBSCRIBING FROM STREAM'),
+					Effect.promise(() => subscribeRedisClient.unsubscribe()),
+					Effect.promise(() => subscribeRedisClient.quit())
+				])
 			);
 
 			yield* Effect.sync(() =>
-				subscribeClient.on('message', (channel, message) => {
+				subscribeRedisClient.on('message', (channel, message) => {
 					if (channel !== streamKey) return;
 					processor(message);
 				})
 			);
 
 			const existingMessages = yield* Effect.tryPromise({
-				try: () => redisClient.xread('BLOCK', 0, 'STREAMS', streamKey, '0'),
+				try: () => mainRedisClient.xread('BLOCK', 0, 'STREAMS', streamKey, '0'),
 				catch: (error) => new RedisError(error)
 			});
 
-			if (existingMessages && existingMessages.length > 0) {
+			if (existingMessages && Array.isArray(existingMessages) && existingMessages.length > 0) {
 				const [result] = existingMessages;
 
 				if (result) {
@@ -64,32 +79,29 @@ const redisService = Effect.gen(function* () {
 			}
 
 			yield* Effect.tryPromise({
-				try: () => subscribeClient.subscribe(streamKey),
+				try: () => subscribeRedisClient.subscribe(streamKey),
 				catch: (error) => new RedisError(error)
 			});
 		});
 
 	const appendToStream = (key: string, value: string) =>
 		Effect.gen(function* () {
-			const redisClient = yield* Effect.sync(() => new Redis(env.REDIS_URL));
 			const streamKey = yield* makeStreamKey(key);
 
 			yield* Effect.all(
 				[
 					Effect.tryPromise({
-						try: () => redisClient.publish(streamKey, value),
+						try: () => mainRedisClient.publish(streamKey, value),
 						catch: (error) => new RedisError(error)
 					}),
 
 					Effect.tryPromise({
-						try: () => redisClient.xadd(streamKey, '*', 'chunk', value),
+						try: () => mainRedisClient.xadd(streamKey, '*', 'chunk', value),
 						catch: (error) => new RedisError(error)
 					})
 				],
 				{ concurrency: 'unbounded' }
 			);
-
-			yield* Effect.promise(() => redisClient.quit());
 		});
 
 	return {
@@ -99,6 +111,6 @@ const redisService = Effect.gen(function* () {
 });
 
 export class RedisService extends Effect.Service<RedisService>()('RedisService', {
-	effect: redisService,
+	scoped: redisService,
 	dependencies: []
 }) {}

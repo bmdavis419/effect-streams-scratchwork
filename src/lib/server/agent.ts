@@ -9,7 +9,7 @@ import {
 	type Tool,
 	type ToolSet
 } from 'ai';
-import { Chunk, Effect, Exit, pipe, Queue, Scope, Stream } from 'effect';
+import { Chunk, Duration, Effect, Exit, pipe, Queue, Scope, Stream } from 'effect';
 import { TaggedError } from 'effect/Data';
 import z from 'zod';
 import { RedisService } from './redis';
@@ -108,7 +108,7 @@ export const resumeQuestionAskerAgent = (runId: string) =>
 
 		const redis = yield* RedisService;
 
-		yield* Effect.logInfo('SUBSCRIBING TO STREAM');
+		yield* Effect.logInfo('RESUME SCOPE IS OPEN');
 
 		const queue = yield* Queue.unbounded<ServerAgentChunk>().pipe(Scope.extend(scope));
 
@@ -123,9 +123,10 @@ export const resumeQuestionAskerAgent = (runId: string) =>
 
 		const stream = Stream.fromQueue(queue).pipe(
 			Stream.takeUntil((item) => item.type === 'SPECIAL_END_CHUNK'),
+			Stream.timeout(Duration.minutes(2)),
 			Stream.ensuring(
 				Effect.gen(function* () {
-					yield* Effect.logInfo('CLOSING SCOPE');
+					yield* Effect.logInfo('RESUME SCOPE IS CLOSING');
 					yield* Scope.close(scope, Exit.void);
 				})
 			)

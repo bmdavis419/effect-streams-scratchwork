@@ -9,7 +9,6 @@ import {
 import { encoder, type Event } from '@effect/experimental/Sse';
 import { resumeQuestionAskerAgent, runQuestionAskerAgent } from '$lib/server/agent';
 import { HttpServerResponse } from '@effect/platform';
-import { RedisService } from '$lib/server/redis.js';
 
 const getEndpointEffect = (event: RequestEvent) =>
 	Effect.gen(function* () {
@@ -41,7 +40,6 @@ const getEndpointEffect = (event: RequestEvent) =>
 
 		return sseStreamResponse;
 	}).pipe(
-		Effect.provide(RedisService.Default),
 		Effect.catchTag('RedisError', (err) =>
 			Effect.fail(new EndpointError(500, 'redis failed to resume agent: ' + err.message))
 		)
@@ -71,7 +69,6 @@ const postEndpointEffect = (event: RequestEvent) =>
 
 		return sseStreamResponse;
 	}).pipe(
-		Effect.provide(RedisService.Default),
 		Effect.catchTag('AgentError', (err) =>
 			Effect.fail(new EndpointError(500, 'agent failed to run: ' + err.message))
 		)
