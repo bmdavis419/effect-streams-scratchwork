@@ -9,7 +9,7 @@ import {
 	type Tool,
 	type ToolSet
 } from 'ai';
-import { Effect, Exit, pipe, Scope, Stream } from 'effect';
+import { Chunk, Effect, Exit, pipe, Queue, Scope, Stream } from 'effect';
 import { TaggedError } from 'effect/Data';
 import z from 'zod';
 import { RedisService } from './redis';
@@ -77,9 +77,22 @@ const questionAskerAgent = ({ question }: { question: string }) => {
 	return fullStream;
 };
 
+type SpecialAgentStartChunk = {
+	type: 'SPECIAL_START_CHUNK';
+	id: string;
+};
+
+type SpecialAgentEndChunk = {
+	type: 'SPECIAL_END_CHUNK';
+};
+
 type ExtractAgentChunkType<T> = T extends AsyncIterableStream<infer U> ? U : never;
 
-export type AgentChunk = ExtractAgentChunkType<ReturnType<typeof questionAskerAgent>>;
+export type AgentChunk =
+	| ExtractAgentChunkType<ReturnType<typeof questionAskerAgent>>
+	| SpecialAgentStartChunk;
+
+type ServerAgentChunk = AgentChunk | SpecialAgentEndChunk;
 
 class AgentError extends TaggedError('AgentError') {
 	cause: unknown;
@@ -89,6 +102,38 @@ class AgentError extends TaggedError('AgentError') {
 	}
 }
 
+export const resumeQuestionAskerAgent = (runId: string) =>
+	Effect.gen(function* () {
+		const scope = yield* Scope.make();
+
+		const redis = yield* RedisService;
+
+		yield* Effect.logInfo('SUBSCRIBING TO STREAM');
+
+		const queue = yield* Queue.unbounded<ServerAgentChunk>().pipe(Scope.extend(scope));
+
+		yield* redis.subscribeToStream(
+			runId,
+			(message) => {
+				const chunk = JSON.parse(message) as ServerAgentChunk;
+				Effect.runSync(queue.offer(chunk));
+			},
+			scope
+		);
+
+		const stream = Stream.fromQueue(queue).pipe(
+			Stream.takeUntil((item) => item.type === 'SPECIAL_END_CHUNK'),
+			Stream.ensuring(
+				Effect.gen(function* () {
+					yield* Effect.logInfo('CLOSING SCOPE');
+					yield* Scope.close(scope, Exit.void);
+				})
+			)
+		);
+
+		return stream;
+	});
+
 export const runQuestionAskerAgent = (question: string) =>
 	Effect.gen(function* () {
 		const rawStream = yield* Effect.try({
@@ -96,7 +141,21 @@ export const runQuestionAskerAgent = (question: string) =>
 			catch: (error) => new AgentError(error)
 		});
 
-		const stream = Stream.fromAsyncIterable(rawStream, (e) => new AgentError(e));
+		const streamRunId = yield* Effect.sync(() => crypto.randomUUID());
+
+		const startChunk: SpecialAgentStartChunk = {
+			type: 'SPECIAL_START_CHUNK',
+			id: streamRunId
+		};
+
+		const endChunk: SpecialAgentEndChunk = {
+			type: 'SPECIAL_END_CHUNK'
+		};
+
+		const startStream = Stream.make(startChunk);
+		const aiStream = Stream.fromAsyncIterable(rawStream, (e) => new AgentError(e));
+
+		const stream = Stream.concat(startStream, aiStream);
 
 		const scope = yield* Scope.make();
 
@@ -105,8 +164,6 @@ export const runQuestionAskerAgent = (question: string) =>
 		}).pipe(Scope.extend(scope));
 
 		const redis = yield* RedisService;
-
-		const streamRunId = yield* Effect.sync(() => crypto.randomUUID());
 
 		const bgRunner = Effect.forkIn(scope)(
 			pipe(
@@ -117,7 +174,13 @@ export const runQuestionAskerAgent = (question: string) =>
 					})
 				),
 				Effect.ensuring(
-					Effect.all([Scope.close(scope, Exit.void), Effect.logInfo('Background stream closed')])
+					Effect.gen(function* () {
+						yield* Effect.logInfo('Background stream closed');
+						yield* redis
+							.appendToStream(streamRunId, JSON.stringify(endChunk))
+							.pipe(Effect.catchAll(Effect.logError));
+						yield* Scope.close(scope, Exit.void);
+					})
 				)
 			)
 		);

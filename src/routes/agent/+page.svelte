@@ -39,6 +39,30 @@
 	let resumeKey = $derived(params.resumeKey);
 	const trimmedQuestion = $derived(question.trim());
 
+	const resumeAgentEffect = Effect.gen(function* () {
+		console.log('RESUMING AGENT', resumeKey);
+		if (!resumeKey) return;
+
+		const client = yield* HttpClient.HttpClient;
+		const response = yield* client.get(`/api/agent?resumeKey=${resumeKey}`);
+
+		if (response.status !== 200) {
+			return yield* Effect.fail(new Error('Failed to resume agent'));
+		}
+
+		const parser = makeParser((event) => {
+			if (event._tag !== 'Event') return;
+
+			const chunk = JSON.parse(event.data) as AgentChunk;
+
+			console.log('FROM RESUME:', chunk.type);
+		});
+
+		yield* Stream.decodeText(response.stream).pipe(
+			Stream.runForEach((event) => Effect.sync(() => parser.feed(event)))
+		);
+	}).pipe(Effect.provide(BrowserHttpClient.layerXMLHttpRequest));
+
 	const questionAgentEffect = Effect.gen(function* () {
 		const client = yield* HttpClient.HttpClient;
 
@@ -61,6 +85,10 @@
 			const chunk = JSON.parse(event.data) as AgentChunk;
 
 			switch (chunk.type) {
+				case 'SPECIAL_START_CHUNK':
+					params.resumeKey = chunk.id;
+					handleResume();
+					break;
 				case 'text-start':
 					conversation.push({
 						role: 'assistant',
@@ -132,6 +160,12 @@
 			content: trimmedQuestion
 		});
 		curFiber = pipe(questionAgentEffect, Effect.runFork);
+	};
+
+	const handleResume = async () => {
+		// TODO: this should work with the fiber...
+
+		await resumeAgentEffect.pipe(Effect.runPromise);
 	};
 
 	const handleKeyDown = (e: KeyboardEvent) => {
