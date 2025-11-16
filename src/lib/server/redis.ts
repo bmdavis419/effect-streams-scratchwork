@@ -38,27 +38,8 @@ const redisService = Effect.gen(function* () {
 		Effect.gen(function* () {
 			const streamKey = yield* makeStreamKey(key);
 
-			// yea ik I should be duplicating the client above but then the scopes get hellish again and I don't care enough leave me alone
-			const subscribeRedisClient = yield* Effect.sync(() => mainRedisClient.duplicate());
-
-			yield* Scope.addFinalizer(
-				scope,
-				Effect.all([
-					Effect.logInfo('UNSUBSCRIBING FROM STREAM'),
-					Effect.promise(() => subscribeRedisClient.unsubscribe()),
-					Effect.promise(() => subscribeRedisClient.quit())
-				])
-			);
-
-			yield* Effect.sync(() =>
-				subscribeRedisClient.on('message', (channel, message) => {
-					if (channel !== streamKey) return;
-					processor(message);
-				})
-			);
-
 			const existingMessages = yield* Effect.tryPromise({
-				try: () => mainRedisClient.xread('BLOCK', 0, 'STREAMS', streamKey, '0'),
+				try: () => mainRedisClient.xread('STREAMS', streamKey, '0'),
 				catch: (error) => new RedisError(error)
 			});
 
@@ -77,6 +58,24 @@ const redisService = Effect.gen(function* () {
 					}
 				}
 			}
+
+			const subscribeRedisClient = yield* Effect.sync(() => new Redis(env.REDIS_URL));
+
+			yield* Scope.addFinalizer(
+				scope,
+				Effect.all([
+					Effect.logInfo('UNSUBSCRIBING FROM STREAM'),
+					Effect.promise(() => subscribeRedisClient.unsubscribe()),
+					Effect.promise(() => subscribeRedisClient.quit())
+				])
+			);
+
+			yield* Effect.sync(() =>
+				subscribeRedisClient.on('message', (channel, message) => {
+					if (channel !== streamKey) return;
+					processor(message);
+				})
+			);
 
 			yield* Effect.tryPromise({
 				try: () => subscribeRedisClient.subscribe(streamKey),
