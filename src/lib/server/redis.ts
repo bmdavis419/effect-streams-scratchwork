@@ -4,8 +4,7 @@ import { TaggedError } from 'effect/Data';
 import Redis from 'ioredis';
 
 // ok so apparently this is causing issues because the redis instance is getting shared around between redisClient and subscribeClient
-
-// yea ik the above is not the effect-y way to get the redis client but it's nice for serverless so leave me alone
+// works great locally, but on vercel shit seems to be getting fucked up... need to investigate further...
 
 class RedisError extends TaggedError('RedisError') {
 	cause: unknown;
