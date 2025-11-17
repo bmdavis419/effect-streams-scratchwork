@@ -1,6 +1,5 @@
 import { OPENROUTER_API_KEY } from '$env/static/private';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { waitUntil } from '@vercel/functions';
 import {
 	stepCountIs,
 	streamText,
@@ -9,7 +8,7 @@ import {
 	type Tool,
 	type ToolSet
 } from 'ai';
-import { Chunk, Duration, Effect, Exit, pipe, Queue, Scope, Stream } from 'effect';
+import { Duration, Effect, Exit, pipe, Queue, Scope, Stream } from 'effect';
 import { TaggedError } from 'effect/Data';
 import z from 'zod';
 import { RedisService } from './redis';
@@ -166,7 +165,7 @@ export const runQuestionAskerAgent = (question: string) =>
 
 		const redis = yield* RedisService;
 
-		const bgRunner = Effect.forkIn(scope)(
+		yield* Effect.forkIn(scope)(
 			pipe(
 				bgStream,
 				Stream.runForEach((data) =>
@@ -182,11 +181,10 @@ export const runQuestionAskerAgent = (question: string) =>
 							.pipe(Effect.catchAll(Effect.logError));
 						yield* Scope.close(scope, Exit.void);
 					})
-				)
+				),
+				Effect.runFork
 			)
 		);
-
-		yield* Effect.sync(() => waitUntil(Effect.runPromise(bgRunner)));
 
 		return respStream;
 	});
